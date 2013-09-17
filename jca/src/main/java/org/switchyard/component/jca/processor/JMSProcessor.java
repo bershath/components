@@ -23,6 +23,7 @@ import javax.jms.Message;
 import javax.jms.MessageProducer;
 import javax.jms.Session;
 import javax.naming.InitialContext;
+import javax.naming.NamingException;
 
 import org.apache.log4j.Logger;
 import org.switchyard.Exchange;
@@ -35,6 +36,7 @@ import org.switchyard.SwitchYardException;
  * A concrete outbound processor class for JMS.
  * 
  * @author <a href="mailto:tm.igarashi@gmail.com">Tomohisa Igarashi</a>
+ * @author <a href="mailto:bershath@gmail.com">Tyronne Wickramarathne</a>
  *
  */
 public class JMSProcessor extends AbstractOutboundProcessor {
@@ -61,6 +63,7 @@ public class JMSProcessor extends AbstractOutboundProcessor {
     private int _ackMode;
     private ConnectionFactory _connectionFactory;
     private Destination _jmsDestination;
+    private InitialContext _initialContext;
     private MessageComposer<JMSBindingData> _composer;
     private MessageType _outMessageType = MessageType.Object;
     
@@ -97,9 +100,8 @@ public class JMSProcessor extends AbstractOutboundProcessor {
         _composer = getMessageComposer(JMSBindingData.class);
         
         try {
-            InitialContext ic = new InitialContext();
-            _connectionFactory = (ConnectionFactory) ic.lookup(getConnectionFactoryJNDIName());
-            _jmsDestination = (Destination) ic.lookup(_destination);
+        	_initialContext = new InitialContext();
+            _connectionFactory = (ConnectionFactory) _initialContext.lookup(getConnectionFactoryJNDIName());
         } catch (Exception e) {
             throw new SwitchYardException("Failed to initialize " + this.getClass().getName(), e);
         }
@@ -120,10 +122,9 @@ public class JMSProcessor extends AbstractOutboundProcessor {
             } else {
                 connection = _connectionFactory.createConnection();
             }
-            connection.start();
             
             session = connection.createSession(_txEnabled, _ackMode);
-            MessageProducer producer = session.createProducer(_jmsDestination);
+            MessageProducer producer = session.createProducer(getDestination(session));
             
             Message msg;
             switch (_outMessageType) {
@@ -152,20 +153,46 @@ public class JMSProcessor extends AbstractOutboundProcessor {
             throw new HandlerException("Failed to process JMS outbound interaction", e);
         } finally {
             try {
-                if (session != null) {
-                    session.close();
-                }
                 if (connection != null) {
                     connection.close();
                 }
             } catch (JMSException e) {
-                _logger.warn("Failed to close JMS session/connection: " + e.getMessage());
+                _logger.warn("Failed to close JMS connection: " + e.getMessage());
                 if (_logger.isDebugEnabled()) {
                     e.printStackTrace();
                 }
             }
         }
     }
+    
+    
+    /**
+     * 
+     * @param session
+     * @return {@link Destination}
+     */
+    
+    private Destination getDestination(Session session){
+    	try{
+    		if (_destination.startsWith("jms.queue")) 
+    			_jmsDestination = session.createQueue(_destination);
+    		
+    		else if (_destination.startsWith("jms.topic"))
+    			_jmsDestination = session.createTopic(_destination);
+    		 
+    		else 
+    			_jmsDestination = (Destination) _initialContext.lookup(_destination);
+    		
+    	} catch (JMSException e){
+    		_logger.warn("Failed to initialise the outbound destination " + _destination + " " + e.getMessage());
+    		e.printStackTrace();
+    	} catch (NamingException e) {
+			_logger.warn("Failed to lookup the destination " + _destination + " " + e.getMessage());
+			e.printStackTrace();
+		}
+    	return _jmsDestination;
+    }
+    
     
     /**
      * set destination name.
